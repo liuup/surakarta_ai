@@ -63,6 +63,40 @@ function sliceCols(text, cols) {
  */
 const PANEL_COL = 23;
 const BOARD_LINE = /^[\s/\\|+\-o.*^BR]+$/;
+
+/*
+ * 棋盘上每个线字形伸出的「胳膊」指向哪几格。
+ * 用来验证折线是连通的：方角悬空、或者一根线断在空格里，都是栅格化出错的症状。
+ * ─ 和 │ 各有两个相反的胳膊；┌ ┐ └ ┘ 各管一个横胳膊和一个竖胳膊；┼ 四个都有。
+ */
+const ARMS = {
+  '─': [[-1, 0], [1, 0]], '│': [[0, -1], [0, 1]],
+  '┌': [[1, 0], [0, 1]], '┐': [[-1, 0], [0, 1]],
+  '└': [[1, 0], [0, -1]], '┘': [[-1, 0], [0, -1]],
+  '┼': [[-1, 0], [1, 0], [0, -1], [0, 1]]
+};
+const LINE_GLYPH = new Set(Object.keys(ARMS));
+
+/** 返回棋盘区里所有不连通的地方（空数组表示全连通） */
+function brokenArms(out) {
+  const grid = out.split('\n').map(line => Array.from(sliceCols(line, PANEL_COL)));
+  const at = (x, y) => (grid[y] && grid[y][x]) || ' ';
+  const bad = [];
+  for (let y = 0; y < grid.length; y++) {
+    for (let x = 0; x < grid[y].length; x++) {
+      const glyph = grid[y][x];
+      if (!LINE_GLYPH.has(glyph)) continue;
+      for (const [dx, dy] of ARMS[glyph]) {
+        const n = at(x + dx, y + dy);
+        if (n === ' ') { bad.push(`(${x},${y}) 的 ${glyph} 有一头指向空格`); continue; }
+        if (LINE_GLYPH.has(n) && !ARMS[n].some(([bx, by]) => bx === -dx && by === -dy)) {
+          bad.push(`(${x},${y}) 的 ${glyph} 与 (${x + dx},${y + dy}) 的 ${n} 接不上`);
+        }
+      }
+    }
+  }
+  return bad;
+}
 const boardOf = text => text.split('\n')
   .map(line => sliceCols(line, PANEL_COL))
   .filter(line => BOARD_LINE.test(line))
@@ -165,12 +199,71 @@ async function main() {
       assert.ok(widestLine(zh.out) <= WIDTH, `中文最宽 ${widestLine(zh.out)} 列`);
     });
 
+    await check('棋盘只用横竖笔画，没有斜线', async () => {
+      // 终端里一个字符约「半格宽、一格高」，斜线拼出的圆弧永远对不齐，
+      // 所以角环的折线只用 ─ │ ┌ ┐ └ ┘（ASCII 模式是 - | +）。
+      const uni = await runTUI(['--server', BASE, '--no-color'], '');
+      const boardRegion = text => text.split('\n').map(l => sliceCols(l, PANEL_COL)).join('\n');
+      assert.ok(!/[╱╲]/.test(boardRegion(uni.out)), '棋盘上出现了斜线字形 ╱ ╲');
+      assert.ok(!/[/\\]/.test(boardRegion(en.out)), '--plain 的棋盘上出现了 / 或 \\');
+      assert.ok(/[┌┐└┘]/.test(boardRegion(uni.out)), '角环应当用方角画出来');
+    });
+
+    await check('棋盘上的折线互相连通：方角不悬空、线不断在空格里', async () => {
+      for (const args of [['--server', BASE, '--no-color'], ['--server', BASE, '--plain']]) {
+        const { out } = await runTUI(args, '');
+        const bad = brokenArms(out);
+        assert.deepStrictEqual(bad, [], args.includes('--plain') ? '--plain：' : 'Unicode：');
+      }
+    });
+
     await check('按 L 当场切换语言（小写 l 不切换）', async () => {
       const flipped = await runTUI(['--server', BASE, '--plain'], 'L');
       assert.ok(flipped.out.includes('Surakarta'), '第一帧应当是英文');
       assert.ok(CJK.test(flipped.out), '按 L 之后应当出现中文');
       const lower = await runTUI(['--server', BASE, '--plain'], 'l');
       assert.ok(!CJK.test(lower.out), '小写 l 只是把光标右移，不应切换语言');
+    });
+
+    await check('对着同一枚棋子再按一次 Enter 就取消选中', async () => {
+      // --plain 模式下每帧之间用一行 --- 分隔，看最后一帧即可
+      const framesOf = async keys => {
+        const { out } = await runTUI(['--server', BASE, '--no-color'], keys);
+        return out.split(/\n-{8,}\n/);
+      };
+      const lastFrame = frames => frames[frames.length - 1];
+      const showsSelection = frame => /Selected \S+ \(\d+ destinations\)/.test(frame);
+
+      await api('/api/new', { level: 0, humanSide: 1 });
+      const once = await framesOf('\r');
+      assert.ok(showsSelection(lastFrame(once)), '按一次 Enter 应当选中棋子并列出落点');
+
+      const twice = await framesOf('\r\r');
+      assert.ok(!showsSelection(lastFrame(twice)), '再按一次应当收起落点提示');
+      assert.ok(!/▸/.test(lastFrame(twice)), '取消选中后不该还留着落点列表');
+
+      const thrice = await framesOf('\r\r\r');
+      assert.ok(showsSelection(lastFrame(thrice)), '第三次应当重新选中——这是切换，不是单向取消');
+    });
+
+    await check('--plain 在选中、思考、报错时也仍然是纯 ASCII', async () => {
+      // 这几个字形只在特定状态下才出现，最初写的纯 ASCII 检查漏掉了它们
+      const nonAscii = out => [...new Set(Array.from(out).filter(c => c.codePointAt(0) > 127))];
+
+      await api('/api/new', { level: 0, humanSide: 1 });
+      const selected = await runTUI(['--server', BASE, '--plain'], '\r');       // 落点列表用 ▸
+      assert.deepStrictEqual(nonAscii(selected.out), [], '选中棋子时：');
+
+      const banner = await runTUI(['--server', BASE, '--plain'], 'u');          // 无棋可悔 → 报错横幅 ✖
+      assert.deepStrictEqual(nonAscii(banner.out), [], '报错横幅时：');
+
+      // AI 先行的局面，进去时它正在思考 → 进度条 █ ░ 与「准备中…」
+      // 用最慢的一档，确保启动终端时它确实还在想（否则这一项会空跑）
+      await api('/api/new', { level: 3, humanSide: 2 });
+      const thinking = await runTUI(['--server', BASE, '--plain'], 'j');
+      assert.deepStrictEqual(nonAscii(thinking.out), [], 'AI 思考中时：');
+      assert.ok(/[#-]{10}/.test(thinking.out), '应当捕捉到思考进度条（这一项才有意义）');
+      await api('/api/new', { level: 0, humanSide: 1 });
     });
 
     await check('帮助浮层在中英文下都完整、不超宽、不被切掉', async () => {

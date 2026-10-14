@@ -229,22 +229,39 @@ node tui.js --plain                # plain ASCII, no colour (for logs or termina
 
 Keys: arrow keys / `hjkl` / `wsd` move the cursor (only `h` goes left, since `a`
 is taken by "agree to end"); Enter or Space selects a piece and plays a move onto
-a highlight; Esc cancels the selection; `n` new game; `u` undo; `1`–`4` difficulty;
+a highlight; **pressing Enter or Space again on that same piece cancels the
+selection** — the destination marks are cleared and you are back to picking a piece
+(Esc does the same); `n` new game; `u` undo; `1`–`4` difficulty;
 `c` switch sides; `a` agree to end; `L` switch language; `?` help; `q` or Ctrl+C
 to quit. The `?` sheet also has a legend explaining every symbol on the board.
 
-The board is drawn with `● ▲ ○ ◦ • ╱ ╲`. In a terminal these are "East Asian
-ambiguous width" characters: almost every terminal (Terminal.app, iTerm2, kitty…)
-renders them single-width, but if yours treats ambiguous width as double, the board
-will be misaligned. Use `--plain` in that case. If the terminal window is too
-small, the program says so rather than drawing garbage.
+The board's lines and corner loops are drawn entirely with box-drawing strokes —
+`─ │ ┌ ┐ └ ┘ ┼` (`- | +` under `--plain`) — plus `● ▲ ○ ◦ •` for pieces, loop
+tangents, destinations and capture paths. **The loops deliberately use no diagonal
+glyphs** (`╱ ╲`, or `/ \` in ASCII): a terminal cell is about half as wide as it is
+tall, so diagonals never line up and a loop built from them reads as a jagged mess.
+The arcs are instead rasterised into an orthogonal polyline — a staircase that only
+ever steps left, right, up or down, with `┌ ┐ └ ┘` at the turns. One detail matters
+there: a rounded arc crosses cells diagonally, and no box-drawing glyph connects two
+diagonal neighbours, so an intermediate cell is inserted wherever that happens;
+otherwise corners end up floating next to each other. Both properties are tested
+(no diagonals on the board, and every stroke's arms connect to a neighbouring
+stroke).
 
-`--plain` does more than swap the board glyphs for ASCII: the `· ● → ’ × ↑↓←→` in
-body text are replaced too — they are just as much a source of mojibake on a
-terminal that cannot do Unicode — so with the default English UI **the output of
-`--plain` is pure ASCII** (a test walks every character). The language row is
-written as `L (zh / English)`. A Chinese UI cannot be ASCII, of course:
-`--plain --lang zh` gives you an ASCII board with Chinese text around it.
+`● ▲ ○ ◦ •` are "East Asian ambiguous width" characters: almost every terminal
+(Terminal.app, iTerm2, kitty…) renders them single-width, but if yours treats
+ambiguous width as double, those will be misaligned. Use `--plain` in that case. If
+the terminal window is too small, the program says so rather than drawing garbage.
+
+`--plain` does more than swap the board glyphs for ASCII: the symbols in body text
+go too — `· ● → ’ × ↑↓←→`, and the `… ▸ ↻ █ ░ ✖` that only show up in particular
+states (the destination list while a piece is selected, the progress bar while the
+AI thinks, an error banner). They are just as much a source of mojibake on a
+terminal that cannot do Unicode, so with the default English UI **the output of
+`--plain` is pure ASCII** — including while a piece is selected, while the AI is
+thinking, and on an error (a test walks every character in each of those states).
+The language row is written as `L (zh / English)`. A Chinese UI cannot be ASCII, of
+course: `--plain --lang zh` gives you an ASCII board with Chinese text around it.
 
 When the output is not a terminal (redirected to a file, or piped) there is no real
 size to read, so the layout follows the `COLUMNS` and `LINES` environment
@@ -337,7 +354,7 @@ node tests/ai.test.js         # 11 AI tests
 node tests/search.test.js     # 4 search-correctness tests (against naive minimax)
 node tests/api.test.js        # 16 backend API tests (starts server.js and makes real HTTP requests)
 node tests/i18n.test.js       # 12 text-table tests
-node tests/tui.test.js        # 12 terminal-UI tests (starts tui.js for real and feeds it keys)
+node tests/tui.test.js        # 16 terminal-UI tests (starts tui.js for real and feeds it keys)
 ```
 
 Rules tests cover: loop endpoint pairing, the intersections each circuit passes
@@ -413,17 +430,25 @@ mostly watch for is **layout** — the likeliest thing to go wrong in a terminal
 is not logic but drawing: a line wider than the screen wraps and the whole panel
 falls apart, and one row too many clips the help sheet. So widths are measured in
 **display columns** (a Chinese character counts as 2), not in characters. They
-cover: English by default, `--plain` output being pure ASCII in English, `--lang zh`
-switching to Chinese **with the board unchanged character for character**, the move
-logs of the two languages corresponding move by move, `L` switching on the spot
-(lower-case `l` only moves the cursor), the help overlay being complete and not
-over-wide in either language, `--help`, the message and exit code when the backend
-is unreachable, the too-small-screen message, and a move played through the API
-showing up in the terminal. Two of these were added while fixing bugs: the "how it
+cover: English by default, `--plain` output being pure ASCII in English (**walking
+every character while a piece is selected, while the AI is thinking, and on an
+error**), `--lang zh` switching to Chinese **with the board unchanged character for
+character**, the move logs of the two languages corresponding move by move, `L`
+switching on the spot (lower-case `l` only moves the cursor), **Enter on the same
+piece again cancelling the selection** (a third press selects it again — it is a
+toggle, not a one-way cancel), **no diagonal strokes anywhere on the board**,
+**every stroke's arms meeting a neighbouring stroke** (no floating corner, no line
+ending in a space), the help overlay being complete and not over-wide in either
+language, `--help`, the message and exit code when the backend is unreachable, the
+too-small-screen message, and a move played through the API showing up in the
+terminal. Several of these were added while fixing bugs or redrawing: the "how it
 plays" paragraph in the help sheet used to be clipped mid-sentence (English
 sentences are longer than Chinese ones and overflowed the 59-column body width),
-and `--plain` used to be a lie (the board glyphs became ASCII while `· ● → ’ × ↑↓←→`
-in body text still went out as Unicode).
+`--plain` used to be a lie (the board glyphs became ASCII while `· ● → ’ × ↑↓←→` in
+body text still went out as Unicode — and later, so did the `▸ ✖ █` that only appear
+in those three states), and the corner loops used to be built from diagonals — on
+that old rendering the two connectivity checks find 60 diagonal glyphs and 8 broken
+joins.
 
 ### Match tools (optional)
 

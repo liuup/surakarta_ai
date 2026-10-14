@@ -94,12 +94,12 @@ const INTERACTIVE = COLOR && !!process.stdout.isTTY && !!process.stdin.isTTY;
 /** 画棋盘用的字形。plain 模式下退回到纯 ASCII */
 const G = OPTS.ascii ? {
   hLine: '-', vLine: '|', cross: '+',
-  black: 'B', red: 'R', loop: 'o', dot: '.', trail: '*', caret: '^',
-  arcSE: '\\', arcNE: '/'
+  cornerTL: '+', cornerTR: '+', cornerBL: '+', cornerBR: '+',
+  black: 'B', red: 'R', loop: 'o', dot: '.', trail: '*', caret: '^'
 } : {
   hLine: '─', vLine: '│', cross: '┼',
-  black: '●', red: '▲', loop: '○', dot: '◦', trail: '•', caret: '^',
-  arcSE: '╲', arcNE: '╱'
+  cornerTL: '┌', cornerTR: '┐', cornerBL: '└', cornerBR: '┘',
+  black: '●', red: '▲', loop: '○', dot: '◦', trail: '•', caret: '^'
 };
 
 /** 256 色索引与真彩色 RGB 两套配色 */
@@ -342,36 +342,77 @@ function createCanvas(width, height, styles) {
 // ============================================================ 绘制棋盘
 
 /**
- * 圆弧上一点该用哪个字形：按曲线在那里的切向来挑 ─ │ ╲ ╱。
- * 棋盘一格在横竖两个方向上都是两个字符宽，所以网格坐标下的方向
- * 就是屏幕上的真实方向，直接比分量即可。
+ * 折线上一个字符位置该用哪个字形：横竖两种笔画，拐弯处用方角。
+ *
+ * 这里只用 ─ │ ┌ ┐ └ ┘，不用 ╱ ╲：终端里一个字符约「半格宽、一格高」，
+ * 斜线拼出来的圆弧永远对不齐，看上去是一团歪斜的锯齿，横竖笔画反而干净。
+ *
+ * 方向用「进来」「出去」两个向量描述（屏幕坐标，+x 向右、+y 向下），
+ * 某一轴为 0 表示那一段不存在（折线的两个端点）。
  */
-function tangentGlyph(gx, gy) {
-  const ax = Math.abs(gx), ay = Math.abs(gy);
-  if (ay * 2 <= ax) return G.hLine;
-  if (ax * 2 <= ay) return G.vLine;
-  return (gx > 0) === (gy > 0) ? G.arcSE : G.arcNE;
+function orthoGlyph(inDx, inDy, outDx, outDy) {
+  // 两条胳膊各自指向哪边：进来时指向来路，出去时指向去路
+  const armH = inDx !== 0 ? -inDx : outDx;
+  const armV = inDy !== 0 ? -inDy : outDy;
+  if (armH !== 0 && armV !== 0) {
+    if (armH > 0) return armV > 0 ? G.cornerTL : G.cornerBL;   // 右+下 ┌、右+上 └
+    return armV > 0 ? G.cornerTR : G.cornerBR;                 // 左+下 ┐、左+上 ┘
+  }
+  if (armH !== 0) return G.hLine;
+  if (armV !== 0) return G.vLine;
+  return G.hLine;
+}
+
+/**
+ * 把圆弧采样点变成一条只走横竖的折线（字符坐标）。
+ * 采样点落在斜对角的两格之间时补一个中间格，折线才连得起来——
+ * 方角字形只连接上下左右四个邻格，跨对角线是接不上的。
+ * 补哪一边：接着上一段的方向走，这样阶梯才会顺着曲线拐，而不是来回抖。
+ */
+function arcCells(pts) {
+  const cells = [];
+  let cur = null;
+  let lastAxis = 'h';                       // 圆弧总是从切点出发，起手是水平的
+  for (let i = 0; i < pts.length; i++) {
+    const x = Math.round(ORIGIN_X + pts[i].x * STEP_X);
+    const y = Math.round(ORIGIN_Y + pts[i].y * STEP_Y);
+    if (cur && cur.x === x && cur.y === y) continue;
+    if (!cur) {
+      cur = { x: x, y: y };
+      cells.push(cur);
+      continue;
+    }
+    if (x !== cur.x && y !== cur.y) {       // 斜着跨格：补一个中间格
+      const mid = lastAxis === 'h' ? { x: x, y: cur.y } : { x: cur.x, y: y };
+      cells.push(mid);
+      lastAxis = lastAxis === 'h' ? 'v' : 'h';
+    } else {
+      lastAxis = x !== cur.x ? 'h' : 'v';
+    }
+    cur = { x: x, y: y };
+    cells.push(cur);
+  }
+  return cells;
 }
 
 /**
  * 八个角环的圆弧：半径 1 画内回路色，半径 2 画外回路色。
  * 逐格铺字形（同一格只落一次），这样 21×12 的小棋盘上也能看出
- * 是一条连续的曲线，而不是一堆点或者一个方框。
+ * 是一条连续的折线，而不是一堆点或者一个方框。
  */
 function drawArcs(canvas) {
   for (const circle of R.CIRCLES) {
-    const pts = R.loopArcPoints(circle, 400);
+    const cells = arcCells(R.loopArcPoints(circle, 400));
     const style = circle.inner ? S.inner : S.outer;
-    let lastX = -1, lastY = -1;
-    for (let i = 0; i < pts.length; i++) {
-      const x = Math.round(ORIGIN_X + pts[i].x * STEP_X);
-      const y = Math.round(ORIGIN_Y + pts[i].y * STEP_Y);
-      if (x === lastX && y === lastY) continue;
-      lastX = x;
-      lastY = y;
-      const back = pts[Math.max(0, i - 1)];
-      const fwd = pts[Math.min(pts.length - 1, i + 1)];
-      canvas.put(x, y, tangentGlyph(fwd.x - back.x, fwd.y - back.y), style, P.arc);
+    for (let i = 0; i < cells.length; i++) {
+      const prev = cells[i - 1], next = cells[i + 1], cur = cells[i];
+      const glyph = orthoGlyph(
+        prev ? Math.sign(cur.x - prev.x) : 0,
+        prev ? Math.sign(cur.y - prev.y) : 0,
+        next ? Math.sign(next.x - cur.x) : 0,
+        next ? Math.sign(next.y - cur.y) : 0
+      );
+      canvas.put(cur.x, cur.y, glyph, style, P.arc);
     }
   }
 }
@@ -794,7 +835,7 @@ function buildHelpOverlay(ctx, cols, rows) {
   const rowsSpec = [
     [S.accent + tr('tui.help.move') + S.reset, tr('tui.help.moveKeys')],
     [S.accent + tr('tui.help.confirm') + S.reset, tr('tui.help.confirmKeys')],
-    [S.accent + tr('tui.help.esc') + S.reset, 'Esc'],
+    [S.accent + tr('tui.help.esc') + S.reset, tr('tui.help.escKeys')],
     [S.accent + tr('tui.help.new') + S.reset, 'n'],
     [S.accent + tr('tui.help.undo') + S.reset, tr('tui.help.undoKeys')],
     [S.accent + tr('tui.help.side') + S.reset, tr('tui.help.sideKeys')],
@@ -1024,7 +1065,10 @@ let framesWritten = 0;
  */
 const PLAIN_ASCII = {
   '─': '-', '·': '|', '●': '*', '→': '->', '’': "'", '×': 'x',
-  '↑': '^', '↓': 'v', '←': '<', '“': '"', '”': '"', '—': '-', '–': '-'
+  '↑': '^', '↓': 'v', '←': '<', '“': '"', '”': '"', '—': '-', '–': '-',
+  // 下面几个只在特定状态下才出现（选中棋子、AI 思考、报错），
+  // 所以曾经从「纯 ASCII」的检查里漏了过去
+  '…': '...', '▸': '>', '↻': '~', '█': '#', '░': '-', '✖': 'x'
 };
 const PLAIN_NEEDS_MAP = new RegExp('[' + Object.keys(PLAIN_ASCII).join('') + ']', 'g');
 
@@ -1190,6 +1234,13 @@ function confirm() {
   if (s.thinking || s.side !== s.humanSide) { setBanner(tr('tui.waitAI')); return Promise.resolve(); }
 
   const cell = cellAtCursor();
+  // 对着同一枚棋子再按一次，就取消选中、收起所有落点提示，回到挑棋子的状态。
+  // （选中时提示里列出的落点都是空点或敌子，永远不会是这枚棋子自己所在的格子，
+  //   所以这条判断不会把「走过去吃子」挡住。）
+  if (cell === app.selected) {
+    clearSelection();
+    return Promise.resolve();
+  }
   if (app.selected >= 0) {
     for (const hint of app.hints) {
       if (hint.to === cell) return playMove(hint.move);
