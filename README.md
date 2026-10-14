@@ -1,303 +1,524 @@
-# 苏拉卡尔塔（Surakarta）
+# Surakarta
 
-印度尼西亚传统棋种「苏拉卡尔塔」，人与 AI 对战，AI 提供四档搜索深度。
-有**网页**和**终端**两套界面，共用同一个后端服务，因此两边的棋是同一局。
-界面支持**中英双语**，默认英文，随时可切。
-不依赖任何第三方库、构建工具或 npm 包。
+Surakarta, a traditional Indonesian board game, played against an AI with four
+adjustable search depths. There are two front ends — **web** and **terminal** —
+sharing a single backend service, so both show the same game. The interface is
+available in **English and Chinese**, English by default.
+No third-party libraries, build tools, or npm packages.
 
-## 运行方式
+**English** | [中文](README.zh-CN.md)
+
+## Running it
 
 ```bash
-node server.js                 # 启动后端服务，默认 http://127.0.0.1:8123
+node server.js                 # start the backend, default http://127.0.0.1:8123
 ```
 
-- **网页版**：浏览器打开 <http://127.0.0.1:8123/>
-- **终端版**：另开一个终端，运行 `node tui.js`
+- **Web**: open <http://127.0.0.1:8123/> in a browser
+- **Terminal**: in another terminal, run `node tui.js`
 
-两个界面可以同时开着，共用同一局棋：在终端里落子，网页上过一会儿就变了，反之亦然。
+Both can be open at once and share the same game: play a move in the terminal and
+the page catches up a moment later, and the other way round.
 
-不想开服务也可以玩：直接双击 `index.html`（或在浏览器里打开），页面探测不到后端时会
-自动改用本页直接对局，功能完全一样。给地址加上 `?local=1` 可以强制使用这种离线模式。
+You do not need the server either: open `index.html` directly in a browser, and
+when the page cannot find a backend it falls back to playing the game inside the
+page, with exactly the same features. Add `?local=1` to the URL to force that
+offline mode.
 
 ```bash
-node server.js --port 9000     # 换端口
-node server.js --lang zh       # 服务端的提示文字用中文（默认英文）
+node server.js --port 9000     # different port
+node server.js --lang zh       # server messages in Chinese (English by default)
 node tui.js --server http://127.0.0.1:9000
 ```
 
-## 目录结构
+## Layout
 
 ```
-server.js           后端服务：静态文件 + JSON 接口 + 驱动 AI 搜索
-tui.js              终端界面（只负责画与收键盘，逻辑全在后端）
-index.html          网页结构与规则说明
-css/style.css       网页样式
-js/rules.js         规则引擎（棋盘几何、着法生成、路径追踪）
-js/ai.js            AI 搜索引擎（Alpha-Beta + 置换表 + 吃子静态搜索）
-js/session.js       一局棋的状态机（走子/悔棋/终局/AI 调度），Node 与浏览器共用
-js/i18n.js          中英文案表（唯一存放界面文字的地方）
-js/main.js          网页界面：画棋盘 + 收鼠标，状态全部来自「驱动」
-tests/              测试，见下文
+server.js           Backend: static files + JSON API + driving the AI search
+tui.js              Terminal interface (draws and reads keys; all logic is on the backend)
+index.html          Page structure and the rules text
+css/style.css       Page styles
+js/rules.js         Rules engine (board geometry, move generation, path tracing)
+js/ai.js            AI search (alpha-beta + transposition table + capture quiescence)
+js/session.js       One game's state machine (moves/undo/end/AI scheduling), shared by Node and the browser
+js/i18n.js          The English and Chinese text tables (the only place UI text lives)
+js/main.js          Web interface: draws the board and handles the mouse; all state comes from a "driver"
+tests/              Tests, see below
 ```
 
-### 三层结构
+### Three layers
 
 ```
-        js/rules.js   js/ai.js          ← 规则与搜索，纯函数，不碰界面
+        js/rules.js   js/ai.js          ← rules and search, pure functions, no UI
               │
-        js/session.js                  ← 一局棋：状态、历史、终局判定、AI 调度
+        js/session.js                  ← one game: state, history, end conditions, AI scheduling
               │
       ┌───────┴────────┐
-   server.js        浏览器里的 main.js
-      │                 （离线模式下直接跑 session.js）
+   server.js         main.js in the browser
+      │                 (offline mode runs session.js directly)
    ┌──┴───┐
- 网页    tui.js                        每套界面各自查 js/i18n.js 渲染文字
+  web    tui.js                        each front end renders text via js/i18n.js
 ```
 
-`js/session.js` 不碰 DOM、也不自己设定时器，推进 AI 搜索由调用方驱动。
-因此同一份对局逻辑既能跑在服务里（网页与终端共用），也能跑在页面里（离线）。
-在线模式下网页只是把 `GET /api/state` 的结果画出来，自己不做任何规则判断。
+`js/session.js` touches no DOM and sets no timers of its own; whoever calls it
+drives the AI search forward. That is why the same game logic can run inside the
+service (shared by the web page and the terminal) and inside the page (offline).
+Online, the page only draws the result of `GET /api/state` and makes no rules
+decisions of its own.
 
-### 文字与对局逻辑是分开的
+### Text and game logic are separate
 
-`js/session.js` **不产生任何面向用户的文字**，只产出结构化数据：着法是
-`{side, from, to, capture}`，终局是 `{kind, winner, side, counts}`，出错是
-`{code, params}`。语言只活在 `js/i18n.js` 一张平铺的键值表里，由各套界面自己查表渲染。
+`js/session.js` **produces no user-facing text at all**, only structured data:
+a move is `{side, from, to, capture}`, an ending is `{kind, winner, side, counts}`,
+an error is `{code, params}`. Language lives only in one flat key/value table in
+`js/i18n.js`, and each front end looks up what it needs.
 
-这样分层的直接好处是：**同一局棋，网页可以看中文，终端可以看英文**。切换语言时既不用
-重开对局，也不用向后端重新要数据——`state.moves`、`state.result` 原样不动，只是换了种说法。
-服务端返回的 `message` 字段是给 `curl` 和日志看的可读文本，按 `--lang` 生成，界面并不用它。
+The direct benefit of that split: **the same game can be shown in Chinese on the
+web page and in English in the terminal.** Switching language needs no new game
+and no fresh data from the backend — `state.moves` and `state.result` are
+untouched, only the wording changes. The `message` field the server returns is
+readable text for `curl` and logs, generated according to `--lang`; no front end
+uses it.
 
-引擎内部与语言有关的只有两处，且都从同一张表里取：交叉点编号（`a1`…`f6`，两套语言一致）
-与四档难度的显示名（`i18n.level.{key}`，按档位 key 查表）。
+Only two things inside the engine are language-related, and both come from that
+same table: intersection names (`a1`…`f6`, identical in both languages) and the
+display names of the four difficulty levels (`i18n.level.{key}`).
 
-## 实现的规则
+## The rules implemented
 
-以下是完全按照传统规则实现的要点，没有对规则本身做任何增删：
+Everything below follows the traditional rules exactly, with nothing added or
+removed:
 
-- 棋盘为 6×6 交叉点，共 36 个落子点；每方 12 枚棋子，开局时各占靠近自己的两行，中间两行为空。
-- 普通走子：把一枚棋子沿横、竖、斜任一方向走到相邻的空点。不能跳子，也不能落到已有棋子的点上。
-- 吃子：棋子沿所在的行或列直线前进，途中经过的交叉点必须全部为空；走到该直线的尽头时，如果那里有角环，就沿切线离开棋盘，绕过棋盘外的四分之三圆弧，从相邻的另一条线切回棋盘继续前进。方向只在绕环时转过 90°。
-- 至少绕过 1 个角环之后，才允许落在途中遇到的第一枚敌方棋子上并把它吃掉。途中遇到己方棋子，或尚未绕环就遇到棋子，该方向都不能吃子。
-- 绕行过程中同一个空点可以多次经过（例如绕环之后又经过自己的出发点，此时出发点已经空出）。
-- 吃子不是强制动作，可以放弃。
-- 角环只用于吃子，普通走子不会走环——标准规则里不允许「沿回路滑行而不吃子」（那是部分变体规则）。
-- 第 0、5 行与第 0、5 列这四条最外圈线上没有环，所以棋子不能沿着它们绕环；四个角点 (0,0)、(0,5)、(5,0)、(5,5) 的两条线都没有环，因此**角上的棋子永远无法吃子**。最外圈上其余的交叉点仍然可以吃子，只要沿另一方向那条带环的线走——它们正是圆弧与棋盘边的切点。
-- 吃掉对方全部 12 枚棋子即获胜。
+- The board is a 6×6 grid of intersections, 36 points in all. Each side has 12
+  pieces, starting on the two rows nearest that player, with the two middle rows
+  empty.
+- A quiet move takes one piece to an adjacent empty point, horizontally,
+  vertically, or diagonally. No jumping, and no landing on an occupied point.
+- A capture travels in a straight line along the piece's row or column, and every
+  intersection it passes over must be empty. When it reaches the end of that line,
+  if a corner loop is there, it leaves the board tangentially, rides the
+  three-quarter arc outside the board, and comes back in along the adjacent line,
+  continuing its journey. The direction only ever turns 90°, and only while riding
+  a loop.
+- Only after riding **at least one** corner loop may the piece land on the first
+  enemy piece it meets and capture it. Meeting a friendly piece, or meeting any
+  piece before riding a loop, means no capture in that direction.
+- The same empty point may be passed more than once during a capture (for example
+  riding a loop and then passing back over its own starting point, which is now
+  empty).
+- Capturing is never compulsory and may be declined.
+- Corner loops are used for captures only; a quiet move never rides one — the
+  standard rules do not allow "sliding around a loop without capturing" (that is
+  a variant).
+- Rows 0 and 5 and columns 0 and 5 — the four outermost lines — have no loops, so
+  a piece cannot ride a loop along them. At the four corners (0,0), (0,5), (5,0),
+  (5,5) both of the piece's lines are loopless, so **a piece in a corner can never
+  capture**. The other intersections on the outermost ring can still capture, as
+  long as they travel along the line in the other direction that does carry a
+  loop — those points are exactly where an arc meets the edge of the board.
+- Capturing all 12 enemy pieces wins.
 
-### 角环的几何
+### The geometry of the corner loops
 
-四个角点各有两个同心圆，半径分别为 1 格与 2 格：
+Each of the four corners has two concentric circles, of radius 1 and 2 squares:
 
-- 半径 1 的圆与棋盘线相切于「从角点往里第二格」的两个点，四条这样的圆弧构成**内侧回路**，经过第 1、4 行与第 1、4 列。
-- 半径 2 的圆与棋盘线相切于「从角点往里第三格」的两个点，四条这样的圆弧构成**外侧回路**，经过第 2、3 行与第 2、3 列。
+- The radius-1 circle is tangent to the board lines at the points "second in from
+  the corner"; four such arcs form the **inner circuit**, passing through rows 1
+  and 4 and columns 1 and 4.
+- The radius-2 circle is tangent at the points "third in from the corner"; four
+  such arcs form the **outer circuit**, passing through rows 2 and 3 and columns 2
+  and 3.
 
-因此一共有 8 个角环。圆弧落在棋盘内的四分之一与棋盘线重合，真正构成环的是棋盘外的四分之三圆弧。两条回路只在交叉点处相交，吃子路径不能在此换线。
+That makes eight corner loops in all. The quarter of each arc that falls inside
+the board coincides with a board line; the three-quarters outside the board are
+what actually forms the loop. The two circuits meet only at intersections, and a
+capture path cannot change lines there.
 
-### 规则核对
+### Verifying the rules
 
-规则依据：Wikipedia「Surakarta (game)」条目、Masters of Games 的 Surakarta 规则页、Cyningstan 的 Surakarta 规则单页、Tabletopia 的官方规则说明与 igGameCenter。这几份资料在棋盘、开局摆法、走子方式、角环几何、吃子方式与胜负条件上完全一致，关键条款摘录如下：
+Sources: the Wikipedia article "Surakarta (game)", the Masters of Games rules
+page, Cyningstan's one-page rules sheet, Tabletopia's official rules, and
+igGameCenter. They agree completely on the board, the opening setup, how pieces
+move, the loop geometry, how captures work, and how a game is won. The key
+clauses:
 
-| 条款 | 出处原文 |
+| Clause | Source wording |
 | --- | --- |
-| 每方 12 子、6×6 | Wikipedia：“Players begin the game with 12 pieces each.” |
-| 斜走合法 | Wikipedia：“moves one of their pieces a single step in any direction (forwards, backwards, sideways, or diagonally) to an unoccupied point”；Cyningstan：“horizontally, vertically or diagonally” |
-| 八个角环、圆心在角点、半径 1 与 2 | Masters of Games：“The points second in at each corner are connected by a three-quarter circle and the points third in from each corner are connected by a larger three-quarter circle concentrically outside the first.” |
-| 切向进出、转 90° | Wikipedia：“The capturing piece enters and leaves the circular loop via a grid line tangent to the circle.” |
-| 至少要绕 1 个环 | Wikipedia：“around at least one of the eight corner loops”；Masters of Games：“At least one loop MUST be travelled around in order to capture.” |
-| 只走空点、不能跳子 | Wikipedia：“Only unoccupied points may be travelled over; jumping over pieces is not permitted.” |
-| 空点可以重复经过 | Wikipedia：“An unoccupied point may be travelled over more than once during the capturing piece's journey.” |
-| 吃子可以放弃 | Wikipedia：“Capturing is always optional (never mandatory).” |
-| 角环只用于吃子 | Wikipedia：“Corner loops are used only when making a capture.” |
-| 吃光对方 12 子获胜；无法推进时按剩余子力由双方协商判定 | Wikipedia：“A game is won when a player captures all 12 of the opponent's pieces. If neither side can make headway, the game is ended by agreement and the winner is the player with the greater number of pieces in play.” |
+| 12 pieces each, 6×6 | Wikipedia: "Players begin the game with 12 pieces each." |
+| Diagonal moves are legal | Wikipedia: "moves one of their pieces a single step in any direction (forwards, backwards, sideways, or diagonally) to an unoccupied point"; Cyningstan: "horizontally, vertically or diagonally" |
+| Eight corner loops, centred on the corners, radii 1 and 2 | Masters of Games: "The points second in at each corner are connected by a three-quarter circle and the points third in from each corner are connected by a larger three-quarter circle concentrically outside the first." |
+| Enter and leave tangentially, turning 90° | Wikipedia: "The capturing piece enters and leaves the circular loop via a grid line tangent to the circle." |
+| At least one loop must be ridden | Wikipedia: "around at least one of the eight corner loops"; Masters of Games: "At least one loop MUST be travelled around in order to capture." |
+| Only empty points, no jumping | Wikipedia: "Only unoccupied points may be travelled over; jumping over pieces is not permitted." |
+| An empty point may be passed more than once | Wikipedia: "An unoccupied point may be travelled over more than once during the capturing piece's journey." |
+| Capturing is optional | Wikipedia: "Capturing is always optional (never mandatory)." |
+| Corner loops are for captures only | Wikipedia: "Corner loops are used only when making a capture." |
+| Capture all 12 to win; when neither side can make headway, agreement decides on material | Wikipedia: "A game is won when a player captures all 12 of the opponent's pieces. If neither side can make headway, the game is ended by agreement and the winner is the player with the greater number of pieces in play." |
 
-需要注意的两点：
+Two points worth noting:
 
-- Wikipedia 的「变体」一节提到有些地区变体「不能斜走、并且可以沿外侧回路滑行而不吃子」。这是**变体**规则，标准规则不采用；本实现按标准规则：普通走子只能走一步。
-- 「无法推进时由双方协商」原文交给玩家判断，网页版必须给出确定的处理方式，见下文「数字版需要自行裁定的地方」。
+- The "variants" section of Wikipedia mentions regional variants that "cannot move
+  diagonally and may slide along the outer loop without capturing". Those are
+  **variants** and not what the standard rules say; this implementation follows
+  the standard rules, where a quiet move is always a single step.
+- "Ended by agreement when neither side can make headway" leaves the decision to
+  the players. A digital version has to settle on something definite — see
+  "Adjudications a digital version has to make" below.
 
-除了读资料，几何本身还用两套互相独立的实现交叉验证过：`js/rules.js` 用「预先算好的角环端点表 + 整数步进」，`tests/geometry.test.js` 则把棋子当成棋盘上的一个点，用**浮点坐标和角度**重新算一遍——求出与出射点相切、半径为 1 或 2 格、圆心落在角点上的那个圆，沿圆转 3/4 圈后用速度向量定出新方向。两套实现在 25 万余组「棋子 + 方向」与 7 万余条完整绕行路径上逐点吻合。因此可以确信规则引擎的几何不是「照着某一份资料想当然写出来的」。
+Beyond reading the sources, the geometry itself is cross-checked by two
+independent implementations: `js/rules.js` uses a precomputed table of loop
+endpoints plus integer stepping, while `tests/geometry.test.js` treats a piece as
+a point on the board and works it out again in **floating-point coordinates and
+angles** — finding the circle of radius 1 or 2 that is tangent to the exit point
+and centred on the corner, riding three-quarters of the way around it, and taking
+the new direction from the velocity vector. The two agree point for point over
+more than 250,000 piece-and-direction cases and more than 70,000 complete capture
+paths. So the geometry in the rules engine is not something written by eye from a
+single source.
 
-## 界面功能
+## What the interface offers
 
-两套界面提供的功能一致：
+Both front ends offer the same things:
 
-- 选中自己的棋子后，界面会标出可以走的空点与可以吃掉的敌子。
-- **绕行路线预览**：指向一个可以吃掉的敌子时，会画出这枚棋子绕角环的完整路线（网页上鼠标悬停，终端里把光标移上去）。最近一次吃子的路线也会保留显示。
-- 棋盘用颜色区分线的类别：青色为内侧回路（第 1、4 行与第 1、4 列），绿色为外侧回路（第 2、3 行与第 2、3 列），褐色为最外侧没有环的线。
-- 难度四档，可随时切换，切换后对下一步 AI 生效。
-- 可以选择执先手（黑）或执后手（红），更换执子方会立即开始新对局。
-- 新对局、悔棋（一次撤回自己与 AI 各一步）、协商终局。
-- 显示 AI 的搜索深度、局面评分、搜索节点数与思考用时，以及双方着法记录。
-- **AI 思考期间界面保持可交互**，不会卡住，思考进度实时刷新。
+- Selecting one of your pieces marks the empty points it can move to and the enemy
+  pieces it can capture.
+- **Capture path preview**: pointing at a piece that can be captured draws the
+  whole route the piece takes around the corner loops (hover with the mouse on the
+  web, move the cursor onto it in the terminal). The route of the most recent
+  capture stays on screen as well.
+- Board lines are colour-coded by kind: cyan for the inner circuit (rows 1 and 4,
+  columns 1 and 4), green for the outer circuit (rows 2 and 3, columns 2 and 3),
+  and brown for the outermost lines, which have no loop.
+- Four difficulty levels, switchable at any time; a change applies to the AI's
+  next move.
+- You can play Black (first) or Red (second); changing sides starts a new game
+  immediately.
+- New game, undo (takes back one move by each side), agree to end.
+- Shows the AI's search depth, position evaluation, node count and thinking time,
+  plus the move log for both sides.
+- **The interface stays responsive while the AI is thinking** — nothing freezes,
+  and the progress updates live.
 
-### 语言切换
+### Language switching
 
-界面有中英两种语言，**默认英文**。
+The interface has two languages, **English by default**.
 
-- 网页：右上角 `English / 中文` 两个按钮，点了立刻整页切换——包括标题、按钮、规则说明、
-  着法记录和终局说明；`<html lang>` 一并改成 `en` / `zh-CN`。选择记在 `localStorage`
-  里，刷新后还在。
-- 终端：启动时加 `--lang zh` 用中文，或随时按 `L` 在两种语言之间来回切。棋盘本身不用重画，
-  换的只是四周的文字。`?` 帮助里也标了 `L (中文 / English)`。
+- Web: the two buttons `English / 中文` in the top right switch the whole page at
+  once — title, buttons, the rules text, the move log and the end-of-game message;
+  `<html lang>` changes too, to `en` or `zh-CN`. The choice is kept in
+  `localStorage` and survives a reload.
+- Terminal: `--lang zh` at startup, or press `L` at any time to switch back and
+  forth. The board itself is not redrawn; only the text around it changes. The `?`
+  help sheet lists `L (中文 / English)` as well.
 
-两种语言覆盖同一批 185 条文案，键名与占位符一一对应（有测试保证）。真的少了一条也不会
-渲染出空白：先退回英文，再退回另一种语言里同名的条目，最后才退回键名本身——所以漏掉
-一条文案时，界面上出现的是一句外文，而不是空白或 `panel.levels` 这样的键名。
+Both languages cover the same 185 strings, with matching keys and matching
+placeholders (a test enforces this). A missing string can never render as a blank
+either: the lookup falls back to English, then to the same key in the other
+language, and only then to the key name itself — so a gap shows up as a foreign
+sentence rather than as a blank or a raw `panel.levels`.
 
-### 终端界面
+### The terminal interface
 
 ```bash
-node tui.js                        # 默认连 http://127.0.0.1:8123，界面英文
+node tui.js                        # connects to http://127.0.0.1:8123 by default, English UI
 node tui.js --server http://…:9000
-node tui.js --lang zh              # 界面中文
-node tui.js --no-color             # 不输出 ANSI 转义，但保留 Unicode 字形
-node tui.js --plain                # 纯 ASCII 且不着色（重定向到文件、日志或终端不兼容时用）
+node tui.js --lang zh              # Chinese UI
+node tui.js --no-color             # no ANSI escapes, Unicode glyphs kept
+node tui.js --plain                # plain ASCII, no colour (for logs or terminals that cannot cope)
 ```
 
-按键：方向键 / `hjkl` / `wsd` 移动光标（左移只有 `h`，`a` 留给协商终局），回车或空格选中棋子、
-落在高亮处走子，Esc 取消选择，`n` 新对局，`u` 悔棋，`1`~`4` 切换难度，`c` 换执子方，
-`a` 协商终局，`L` 切换中英文，`?` 查看帮助，`q` 或 Ctrl+C 退出。`?` 里还有一份图例，说明棋盘上各种符号的含义。
+Keys: arrow keys / `hjkl` / `wsd` move the cursor (only `h` goes left, since `a`
+is taken by "agree to end"); Enter or Space selects a piece and plays a move onto
+a highlight; Esc cancels the selection; `n` new game; `u` undo; `1`–`4` difficulty;
+`c` switch sides; `a` agree to end; `L` switch language; `?` help; `q` or Ctrl+C
+to quit. The `?` sheet also has a legend explaining every symbol on the board.
 
-棋盘用 `● ▲ ○ ◦ • ╱ ╲` 这些字符绘制，它们在终端里属于「东亚模糊宽度」字符：绝大多数终端
-（Terminal.app、iTerm2、kitty…）都按单宽渲染，但若你的终端设置把模糊宽度当作双宽，棋盘会错位。
-遇到这种情况用 `--plain` 即可。终端窗口太小时会直接提示，不会画出乱码。
+The board is drawn with `● ▲ ○ ◦ • ╱ ╲`. In a terminal these are "East Asian
+ambiguous width" characters: almost every terminal (Terminal.app, iTerm2, kitty…)
+renders them single-width, but if yours treats ambiguous width as double, the board
+will be misaligned. Use `--plain` in that case. If the terminal window is too
+small, the program says so rather than drawing garbage.
 
-`--plain` 不只是把棋盘字形换成 ASCII，正文里的 `· ● → ’ × ↑↓←→` 也一并换掉——
-这些同样是终端不认 Unicode 时的乱码源——所以**默认英文下 `--plain` 的输出是纯 ASCII**
-（有测试逐个字符扫过）。语言名那一行会写成 `L (zh / English)`。中文界面本身没法是 ASCII，
-`--plain --lang zh` 得到的是 ASCII 棋盘配中文文字。
+`--plain` does more than swap the board glyphs for ASCII: the `· ● → ’ × ↑↓←→` in
+body text are replaced too — they are just as much a source of mojibake on a
+terminal that cannot do Unicode — so with the default English UI **the output of
+`--plain` is pure ASCII** (a test walks every character). The language row is
+written as `L (zh / English)`. A Chinese UI cannot be ASCII, of course:
+`--plain --lang zh` gives you an ASCII board with Chinese text around it.
 
-输出不是终端时（重定向到文件、管道）取不到真实尺寸，这时按 `COLUMNS` / `LINES` 环境变量排版，
-两者都没有就按 80×24。`COLUMNS=40 node tui.js --plain` 可以看到窄屏下的竖排布局。
+When the output is not a terminal (redirected to a file, or piped) there is no real
+size to read, so the layout follows the `COLUMNS` and `LINES` environment
+variables, and 80×24 if neither is set. `COLUMNS=40 node tui.js --plain` shows the
+narrow-screen stacked layout.
 
-## AI 说明
+## About the AI
 
-搜索引擎位于 `js/ai.js`，做法如下：
+The search engine lives in `js/ai.js` and works like this:
 
-- **迭代加深 + Alpha-Beta 剪枝**的负极大值搜索，带置换表（Zobrist 散列，2^18 项）、杀手着法、历史启发与吃子优先的着法排序。
-- **吃子静态搜索**：叶子节点只延伸吃子着法，最多 4 层，避免「地平线效应」把正在进行的吃子链切断。
-- **评估函数**：子力（每子 100 分）＋ 位置价值（角点 −12，只处一条带环线上 0，处在两条带环线上 +8）＋ 机动性（每个可走空点 4 分）＋ 威胁差（每枚当前可以直接吃子的棋子 30 分）。
-- **搜索过程分块推进**：每约 16～20 毫秒（一帧）就把控制权交还事件循环，再继续搜。按**时间**而不是按固定节点数让出，是为了让快慢不同的机器都保持一样的响应速度。因此搜到第 8 层时，网页不会冻结、终端也不会卡住敲键，HTTP 请求照常能被处理，思考进度实时刷新。
-- **低难度档加入随机性**：入门与进阶档会在评分接近最佳的若干着法里随机选一个，避免每盘棋完全相同；高手与大师档始终选择搜索到的最佳着法。
-- **不重复走旧局面**：对局会把本局已经出现过的局面告诉搜索，**走回旧局面的着法至多只算一个和棋**（必杀分不受影响）。这不是把重复判作和棋——传统规则里没有这一条，对局本身也不会因为重复而结束——只是让 AI 占优时别原地打转。之所以折算成「至多和棋」而不是扣固定分，是因为落后时重复本来就不划算，这样 AI 也不会为了拖延而故意重复。
-  这一条有两个实现上的讲究：折算必须加在**真实的搜索分值**上（若一遇到重复局面就截断成静态评估，等于把「重复」定成一个固定分数，评估偏乐观时反而会诱导 AI 去重复）；而且只在**根节点**折算，搜索树内部不掺对局历史，这样置换表里缓存的分值只取决于局面本身，才能安全地跨搜索、跨对局复用。两者都有对应的用例。
-- **绕行路径的循环检测不能用 32 位整数存代数**（`js/rules.js`，这是个实测抓到的真 bug）。判断「这一趟绕行走过哪些（交叉点, 方向）」用的是代数标记：每趟领一个递增的代数写进数组，下次以同一方向走到同一交叉点时，代数相等即说明前方再无障碍。代数在整个进程里单调递增，而搜索**每个节点**都要绕行几十次——实测约 7900 万次/秒，**累计思考半分钟就超过 2^31**。标记数组原先用的是 `Int32Array`：写入时被截断成负数，读回来的代数却是正数，`stamp === gen` 从此永不成立，这层保护静默失效，`walkCapture` 真的转不出来——外面看到的现象是 AI 搜索卡死、CPU 100%、棋再也走不动。换成 `Float64Array`（精确到 2^53）后这个失败模式不存在了。
-  这一条还有个值得记下的教训：**短命的测试抓不到它**。每个测试进程的累计搜索时间都不到半分钟，永远走不到失效区间，所以写用例时直接把代数设到溢出点再跑一遍着法生成（真跑满 20 多亿次没法写进用例）。为了让「万一有人改回 `Int32Array`」表现为一个明确的失败、而不是让测试挂死，这一项放在子进程里跑，超时即判失败。
+- **Iterative deepening alpha-beta** negamax, with a transposition table (Zobrist
+  hashing, 2^18 entries), killer moves, a history heuristic, and captures-first
+  move ordering.
+- **Capture quiescence**: leaf nodes extend captures only, up to 4 plies, so the
+  horizon effect cannot cut a capture chain short.
+- **Evaluation**: material (100 per piece) + positional value (a corner is −12,
+  being on only one loop-bearing line is 0, being on two is +8) + mobility (4 per
+  empty point reachable) + threat difference (30 per piece that can capture right
+  now).
+- **The search yields in slices**: roughly every 16–20 ms (one frame) it hands
+  control back to the event loop and then continues. Yielding by **time** rather
+  than by a fixed node count is what keeps machines of different speeds equally
+  responsive. That is why searching to depth 8 neither freezes the page nor makes
+  the terminal miss keystrokes, HTTP requests are still served, and the progress
+  display keeps updating.
+- **The lower levels add randomness**: Beginner and Casual pick at random among
+  moves whose scores are close to the best, so that no two games are identical;
+  Strong and Master always play the move the search found best.
+- **No walking back into old positions**: the game tells the search which
+  positions have already occurred, and **a move that returns to an old position
+  counts as at most a draw** (mate scores are unaffected). This is not declaring a
+  repetition a draw — the traditional rules have no such clause, and the game
+  itself never ends because of repetition — it just keeps the AI from going round
+  in circles when it is ahead. Turning it into "at most a draw" rather than a flat
+  penalty is deliberate: repeating is not attractive when you are behind anyway,
+  so the AI has no reason to repeat in order to stall.
+  Two implementation details matter here. The discount has to be applied to the
+  **true search score** (cutting a repeat short into a static evaluation would
+  make "repeat" a fixed score, and an optimistic evaluation would then *invite*
+  repetition), and it is applied **at the root only**, so that no game history
+  leaks into the search tree — that way a score cached in the transposition table
+  depends on the position alone and can be reused safely across searches and across
+  games. Both have tests.
+- **The capture walk's cycle detection must not keep its generation in 32-bit
+  integers** (`js/rules.js`; this was a real bug, found by running the thing).
+  Deciding "which (intersection, direction) has this walk already covered" uses a
+  generation tag: each walk takes the next generation number, writes it into an
+  array, and when it later reaches the same intersection heading the same way, an
+  equal generation means nothing lies ahead and it can stop. The generation climbs
+  monotonically for the life of the process, and the search walks dozens of times
+  **per node** — measured at about 79 million walks per second, so **roughly half a
+  minute of cumulative thinking pushes it past 2^31**. The array used to be an
+  `Int32Array`: the store truncated the number to a negative value while the
+  generation it was compared against stayed positive, so `stamp === gen` never
+  held again. The guard failed silently and `walkCapture` really did loop forever
+  — from the outside, the AI search froze with one core pinned at 100% and the game
+  never moved again. It is a `Float64Array` now (exact to 2^53), and that failure
+  mode is gone.
+  There is a lesson in it worth recording: **short-lived tests cannot catch this.**
+  No test process accumulates half a minute of searching, so it never reaches the
+  broken range. The test therefore sets the generation straight to the overflow
+  point and runs move generation from there (actually running the 2.1 billion walks
+  is not something you can put in a test). And so that "someone changes it back to
+  `Int32Array`" shows up as a clear failure instead of a hung test suite, that case
+  runs in a child process and fails on timeout.
 
-四档难度：
+The four levels:
 
-| 档位 | 搜索深度 | 时间上限 | 说明 |
+| Level | Search depth | Time limit | Notes |
 | --- | --- | --- | --- |
-| 入门 | 2 层 | 0.6 秒 | 会走出明显不够好的着法，适合熟悉规则 |
-| 进阶 | 4 层 | 1.5 秒 | 能看到几步之内的得失，偶尔漏算 |
-| 高手 | 6 层 | 4 秒 | 完整搜索到第 6 层并延伸吃子 |
-| 大师 | 8 层 | 10 秒 | 棋力最强，开局通常在 1 秒内完成第 8 层，复杂中局偶尔会到 7~8 秒 |
+| Beginner | 2 plies | 0.6 s | Random enough to play clearly inferior moves; good for learning the rules |
+| Casual | 4 plies | 1.5 s | Sees gains and losses a few moves ahead, occasionally misses one |
+| Strong | 6 plies | 4 s | Searches the full 6 plies plus capture extensions |
+| Master | 8 plies | 10 s | Strongest; usually finishes depth 8 within a second in the opening, occasionally 7–8 s in a complex middlegame |
 
-搜索速度实测约 140 万～160 万节点/秒（Node 24 与 Chrome 单线程，同一台机器上两者接近）。若某一层没能在时限内搜完，就放弃这一层、用上一层已经搜完的结果走子，因此思考时间始终有上限。
+Measured search speed is about 1.4–1.6 million nodes per second (Node 24 and
+single-threaded Chrome are close on the same machine). If a depth cannot be
+finished within the time limit, that depth is abandoned and the last fully
+completed depth provides the move, so thinking time always has a ceiling.
 
-## 测试
+## Tests
 
-不需要任何测试框架，直接 `node` 跑：
-
-```bash
-node tests/rules.test.js      # 16 项规则测试
-node tests/geometry.test.js   # 4 项角环几何交叉验证（浮点角度实现 vs 整数查表实现）
-node tests/session.test.js    # 15 项对局会话测试（走子/悔棋/终局/AI 调度）
-node tests/ai.test.js         # 11 项 AI 测试
-node tests/search.test.js     # 4 项搜索正确性测试（与朴素极小极大对拍）
-node tests/api.test.js        # 16 项后端接口测试（真实启动 server.js 发 HTTP 请求）
-node tests/i18n.test.js       # 12 项文案表测试
-node tests/tui.test.js        # 12 项终端界面测试（真实启动 tui.js 并喂按键）
-```
-
-规则测试覆盖：角环端点配对、回路经过的交叉点、开局着法数、必须绕环才能吃子、绕环后可吃相邻敌子、外侧回路吃子、角上棋子无法吃子、切向规则（沿最外侧的列直行时不会拐进侧面的环）、己方棋子挡路、绕行路径重复经过空点后仍能终止、绕行检测在代数超过 2^31 后依然有效（见下文）、路径追踪与实际走子一致、左右镜像一致性，以及 300 个随机局面下的着法生成自洽性（无重复、与逐子枚举一致、吃子目标必为敌子、普通走子必在八邻域内）。
-
-几何交叉验证见上文「规则核对」：用浮点坐标与角度独立重算一遍角环，再和规则引擎的查表实现在 25 万余组情形上逐点比对。
-
-会话测试覆盖：状态可 JSON 往返、走子与非法着法、吃子记录绕行路线、着法提示、AI 替当前一方走棋、悔棋一次撤回双方各一步、人类执红时 AI 先行、协商终局按子力判定、吃光对方立即结束、无子可动按协商规则结束、载入局面、难度与执子方切换、新开一局不残留上一局的搜索统计、`revision`/`position` 的变化时机。
-
-AI 测试覆盖：四档难度均返回合法着法且不超时、极小节点预算下分块推进、能吃子必吃、能吃光对方最后一子时识别必胜、无子可动时返回 −1、自我对局中着法全部合法、走回旧局面至多算和棋、落后时重复不带来好处、没搜完就取着法也必须是合法棋、对局历史不会通过置换表污染后续搜索、搜索速度基准。搜索正确性测试则把 Alpha-Beta 的根节点分值与一个**不加任何剪枝、不用置换表**的朴素极小极大搜索逐一对比，两者必须完全相同。
-
-接口测试覆盖：静态资源与目录越权、跨域头、开局状态、着法提示、非法着法返回 409 且不改变局面、AI 应手、AI 思考期间拒绝人类抢着走、思考进度、悔棋、难度切换、换边重开、协商终局、未知接口 404、服务端默认用英文，以及**「网页与终端看到的是同一局棋」**——通过接口走一步或悔棋，另一侧读到的状态必须立刻跟上。
-
-文案表测试覆盖：默认语言是英文、两种语言的词条集合完全一致（185 条）、没有空文案、同一条文案在两种语言里的占位符必须一致（否则换语言时会出现「少了半边句子」或字面的 `{n}`）、英文文案里不出现汉字、花括号没写错、`normalize` 对非法输入的兜底、缺键时退回英文再退回键名、着法与四种终局在两种语言下的渲染、档位名与双方名称、交叉点名称与语言无关。有两条刻意的例外被显式列出：`tui.help.langKeys`（帮助里那行 `L (中文 / English)`）与网页上的语言切换按钮——它们**必须**同时写出两种语言的名字，人才知道该点哪个，所以扫「英文文案里有没有汉字」时把这两处排除。
-
-界面测试里也有一项专门盯语言：`tests/browser/i18n.js` 先确认英文界面上**一个汉字都没有**（直接扫整页文本，比逐个元素断言更难糊弄过去），切到中文后标题、按钮、难度名、`<html lang>` 全部改变，**同一局棋的着法记录与终局说明改用另一种语言渲染而棋子位置一字不差**，刷新后语言选择被记住，最后确认切换语言之后对局照常可以继续走。
-
-终端界面测试（`tests/tui.test.js`）真实启动 `server.js` 与 `tui.js`，把按键从管道喂进去，检查画出来的字符。它盯的主要是**排版**——终端界面最容易出的不是逻辑错，而是画歪了：一行超出屏幕宽度会被折行，整个面板就散了；帮助页多一行就会被切掉。所以宽度按**显示宽度**算（汉字算 2 列），不是按字符个数。覆盖：默认英文、英文 `--plain` 输出为纯 ASCII、`--lang zh` 切中文而**棋盘逐字符不变**、两种语言的着法记录逐手对应、按 `L` 当场切换（小写 `l` 只移动光标）、帮助浮层在中英文下都完整不超宽、`--help`、后端连不上时的报错与退出码、屏幕太小时的提示、以及接口走一步后终端能看到。这几项里有两项是修 bug 时补的：帮助页的玩法段落曾被硬截断（英文句子比中文长，超出 59 列的正文宽度），`--plain` 曾名不副实（棋盘字形换成了 ASCII，正文里的 `· ● → ’ × ↑↓←→` 还是原样吐出来）。
-
-### 对局工具（可选）
-
-想实际看看各档棋力差距，或者想调评估函数时，这几个脚本有用：
+No test framework needed; run them with `node`:
 
 ```bash
-node tests/selfplay.js 4 1                 # 第 4 档执黑对第 1 档执红，走一盘并打印棋谱
-node tests/match.js 4 2 2 800              # 两档各执黑白若干局，统计胜负与子力差
-node tests/diagnose.js 4 2                 # 逐手统计「走完之后对方立刻能吃我几枚子」
+node tests/rules.test.js      # 16 rules tests
+node tests/geometry.test.js   # 4 corner-loop geometry cross-checks (floating-point vs table-driven)
+node tests/session.test.js    # 15 game-session tests (moves/undo/end/AI scheduling)
+node tests/ai.test.js         # 11 AI tests
+node tests/search.test.js     # 4 search-correctness tests (against naive minimax)
+node tests/api.test.js        # 16 backend API tests (starts server.js and makes real HTTP requests)
+node tests/i18n.test.js       # 12 text-table tests
+node tests/tui.test.js        # 12 terminal-UI tests (starts tui.js for real and feeds it keys)
 ```
 
-`tests/match.js` 与 `tests/selfplay.js` 都会**保留每一档自己的随机让子**：低难度档「偶尔漏算」
-正是靠它实现的，早先的版本把随机关掉去做对比，结果各档看起来几乎没有差别，会得出错误结论。
+Rules tests cover: loop endpoint pairing, the intersections each circuit passes
+through, the number of opening moves, that a loop must be ridden before capturing,
+capturing an adjacent enemy after riding one, capturing along the outer circuit,
+that a piece in a corner can never capture, the tangency rule (travelling straight
+along an outermost column must not turn into a loop beside it), friendly pieces
+blocking, that a capture walk passing the same empty point repeatedly still
+terminates, that the walk's cycle detection still works once the generation passes
+2^31 (see below), path tracing agreeing with the move actually played, left-right
+mirror symmetry, and move-generation consistency over 300 random positions (no
+duplicates, agreeing with per-piece enumeration, capture targets always enemy
+pieces, quiet moves always within the eight neighbours).
 
-### 界面测试（可选，需要本机装有 Chrome）
+The geometry cross-check is described above under "Verifying the rules": the corner
+loops are recomputed independently in floating-point coordinates and angles, then
+compared point by point with the table-driven implementation in the rules engine
+over more than 250,000 cases.
 
-`tests/browser/` 下用真实浏览器驱动界面：通过 Chrome 调试协议发送真实鼠标事件，
-检查的是「用户点下去会发生什么」，而不是直接调用页面内部函数。不依赖任何 npm 包。
+Session tests cover: state surviving a JSON round trip, moves and illegal moves,
+captures recording their path, move hints, the AI playing for whichever side is to
+move, undo taking back one move by each side, the AI moving first when the human
+plays Red, agreeing to end adjudicating on material, the game ending the moment a
+side is wiped out, a side with no legal move ending under the agreement rule,
+loading a position, switching difficulty and sides, a new game not leaving the
+previous game's search statistics behind, and exactly when `revision` and
+`position` change.
+
+AI tests cover: all four levels returning a legal move within their time limit,
+sliced progress under a tiny node budget, always capturing when it can, spotting a
+forced win when the opponent's last piece can be taken, returning −1 when there is
+no legal move, every move in a self-play game being legal, a return to an old
+position counting as at most a draw, repetition not paying off when behind,
+returning a legal move even when the search did not finish, game history not
+leaking into later searches through the transposition table, and a search-speed
+benchmark. The search-correctness tests compare the alpha-beta root score against a
+naive minimax that uses **no pruning and no transposition table** at all; the two
+must agree exactly.
+
+API tests cover: static assets and directory traversal, CORS headers, the opening
+state, move hints, an illegal move returning 409 without changing the position, the
+AI replying, the human being refused while the AI is thinking, search progress,
+undo, switching difficulty, changing sides restarting the game, agreeing to end,
+404 on an unknown endpoint, the server speaking English by default, and **"the web
+page and the terminal are looking at the same game"** — play a move or undo through
+the API and the other side's next read must show it.
+
+Text-table tests cover: the default language being English, the two languages
+having exactly the same set of 185 keys, no empty strings, the same placeholders
+for a given key in both languages (otherwise switching language produces half a
+sentence or a literal `{n}`), no Chinese characters in English strings,
+well-formed braces, `normalize` coping with junk input, a missing key falling back
+to English and then to the key name, moves and all four kinds of ending rendering
+in both languages, level names and side names, and intersection names being
+language-independent. Two deliberate exceptions are listed explicitly:
+`tui.help.langKeys` (the `L (中文 / English)` row in the help sheet) and the
+language buttons on the web page — both **must** write the language names in their
+own scripts, or nobody would know which to click, so the "no Chinese in English
+strings" scan skips those two.
+
+One of the browser tests is about language specifically: `tests/browser/i18n.js`
+first checks that the English page contains **not one Chinese character** (by
+scanning the whole page's text, which is much harder to fool than asserting on
+individual elements), then that switching to Chinese changes the title, the
+buttons, the level names and `<html lang>`, that **the same game's move log and
+end-of-game message render in the other language while the pieces stay put
+character for character**, that the choice survives a reload, and finally that play
+continues normally after switching.
+
+The terminal-UI tests (`tests/tui.test.js`) start `server.js` and `tui.js` for real
+and feed keys in through a pipe, checking the characters that come out. What they
+mostly watch for is **layout** — the likeliest thing to go wrong in a terminal UI
+is not logic but drawing: a line wider than the screen wraps and the whole panel
+falls apart, and one row too many clips the help sheet. So widths are measured in
+**display columns** (a Chinese character counts as 2), not in characters. They
+cover: English by default, `--plain` output being pure ASCII in English, `--lang zh`
+switching to Chinese **with the board unchanged character for character**, the move
+logs of the two languages corresponding move by move, `L` switching on the spot
+(lower-case `l` only moves the cursor), the help overlay being complete and not
+over-wide in either language, `--help`, the message and exit code when the backend
+is unreachable, the too-small-screen message, and a move played through the API
+showing up in the terminal. Two of these were added while fixing bugs: the "how it
+plays" paragraph in the help sheet used to be clipped mid-sentence (English
+sentences are longer than Chinese ones and overflowed the 59-column body width),
+and `--plain` used to be a lie (the board glyphs became ASCII while `· ● → ’ × ↑↓←→`
+in body text still went out as Unicode).
+
+### Match tools (optional)
+
+These are useful for seeing how the levels actually differ, or when tuning the
+evaluation:
 
 ```bash
-node server.js --port 8123         # 另开一个终端
-node tests/browser/e2e.js          # 在线模式：走子、应手、悔棋、换边、四档难度、与后端同步
-node tests/browser/i18n.js         # 中英切换：整页文字、着法记录、终局说明、记忆选择
-node tests/browser/offline.js      # 离线模式（file://）：单独对局 + 绕行预览的重绘回归
+node tests/selfplay.js 4 1                 # level 4 as Black against level 1 as Red, one game with the move list
+node tests/match.js 4 2 2 800              # several games each way between two levels, with win/loss and material totals
+node tests/diagnose.js 4 2                 # per move, how many pieces the opponent could take straight afterwards
 ```
 
-`offline.js` 里有一项回归测试值得说明：**在两个吃子目标之间移动鼠标时，绕行预览必须重绘。**
-早期实现用「有没有路线」来决定要不要重绘，于是两个都有路线的目标之间切换时画布不再更新，
-一直停在第一条路线上。这项测试直接比对画布像素指纹，只看页面内部的路径数据是抓不到它的
-——把代码改回旧写法，这项测试确实会失败。
+Both `tests/match.js` and `tests/selfplay.js` **keep each level's own random
+slack**: that is what implements "occasionally misses one" at the lower levels, and
+an earlier version that turned the randomness off to make a cleaner comparison
+showed almost no difference between the levels and led to the wrong conclusion.
 
-`CHROME_PATH` 环境变量可以指定 Chrome 的位置，默认依次尝试 macOS、Linux 与 Windows 的常见路径。
+### Browser tests (optional, needs Chrome installed)
 
-## 接口
+`tests/browser/` drives the interface in a real browser: real mouse events are sent
+over the Chrome DevTools Protocol, and what is checked is "what happens when the
+user clicks", rather than calling the page's own functions. No npm packages.
 
-`server.js` 提供的 JSON 接口（网页与终端都用它）：
+```bash
+node server.js --port 8123         # in another terminal
+node tests/browser/e2e.js          # online: moving, replying, undo, sides, all four levels, staying in sync
+node tests/browser/i18n.js         # language switching: whole page, move log, end message, remembered choice
+node tests/browser/offline.js      # offline (file://): playing in the page + a repaint regression for the path preview
+```
 
-| 方法 | 路径 | 说明 |
+One regression test in `offline.js` is worth explaining: **moving the mouse between
+two capture targets must redraw the path preview.** An earlier implementation
+decided whether to redraw from "is there a path at all", so moving between two
+targets that both had paths left the canvas stuck on the first route. This test
+compares canvas pixel fingerprints directly; looking only at the page's path data
+would not catch it — reverting the code to the old approach does make this test
+fail.
+
+The `CHROME_PATH` environment variable can point at Chrome; by default the usual
+macOS, Linux and Windows locations are tried in turn.
+
+## API
+
+The JSON API `server.js` provides (used by both front ends):
+
+| Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/state` | 取当前完整状态（棋盘、轮次、着法记录、AI 思考进度…） |
-| GET | `/api/hints?cell=N` | 取某个交叉点上这枚棋子的全部着法，吃子着法附带绕行路线 |
-| POST | `/api/move` | `{"move": 整数}`，走一步；轮到 AI 或非法时返回 409 |
-| POST | `/api/new` | `{"humanSide"?, "level"?}` 开新局 |
-| POST | `/api/undo` | 悔棋，撤回双方各一步 |
-| POST | `/api/agree` | 协商终局，按剩余子力判定 |
-| POST | `/api/level` | `{"level": 0..3}` 切换难度 |
-| POST | `/api/side` | `{"side": 1|2}` 换执子方（会重开一局） |
+| GET | `/api/state` | The full current state (board, side to move, move log, AI progress…) |
+| GET | `/api/hints?cell=N` | Every move for the piece on that intersection, captures with their route |
+| POST | `/api/move` | `{"move": integer}`, play a move; 409 when it is the AI's turn or the move is illegal |
+| POST | `/api/new` | `{"humanSide"?, "level"?}`, start a new game |
+| POST | `/api/undo` | Undo, taking back one move by each side |
+| POST | `/api/agree` | Agree to end, adjudicated on the pieces left |
+| POST | `/api/level` | `{"level": 0..3}`, change difficulty |
+| POST | `/api/side` | `{"side": 1|2}`, change which side you play (starts a new game) |
 
-着法编码为 `(起点 << 6) | 终点`，交叉点编号是 `行 * 6 + 列`，都在 `state.board` 里以
-0（空）/ 1（黑）/ 2（红）给出。状态里还有 `revision` 与 `position` 两个计数器：
-前者任何变化都会变（包括 AI 的思考进度），后者只在局面、轮次或对局状态真正改变时才变，
-界面据此决定要不要重画棋盘。
+A move is encoded as `(from << 6) | to`, and intersections are numbered
+`row * 6 + column`; `state.board` gives 0 (empty), 1 (Black) or 2 (Red). The state
+also carries two counters: `revision` changes on anything at all (including the
+AI's search progress), while `position` changes only when the position, the side to
+move or the game's status really changes. The interface uses that to decide whether
+the board needs redrawing.
 
-## 数字版需要自行裁定的地方
+## Adjudications a digital version has to make
 
-原规则把「局面无法继续时由双方协商、剩余棋子多者获胜」交给玩家判断。本实现对它的处理是：
+The original rules leave "when neither side can make headway, the game is ended by
+agreement and the player with more pieces wins" to the players. This implementation
+handles it like this:
 
-- 提供「协商终局」按钮/按键，随时可以按剩余棋子数判定胜负（相等则和棋）。
-- 当轮到的一方完全没有合法着法时，对局自动结束，并按上述协商规则判定胜负。
+- There is an "agree to end" button/key, which adjudicates on the pieces left at
+  any time (equal numbers is a draw).
+- When the side to move has no legal move at all, the game ends automatically and
+  is adjudicated by the same rule.
 
-除这两点之外，规则、棋盘几何、开局摆法、吃子判定均与传统规则一致。另外，传统规则由双方掷硬币决定谁先行；本实现固定黑方先行，用「执子」按钮选择自己执黑还是执红。
+Apart from those two points, the rules, board geometry, opening setup and capture
+rules all match the traditional game. One more thing: traditionally the players
+toss a coin for who moves first; here Black always moves first, and you choose
+whether to play Black or Red with the "play as" buttons.
 
-## 调试入口
+## Debug entry points
 
-- 网页在 `window.__surakarta` 上暴露了 `game`（当前状态）、`ui`（界面状态）、`mode`
-  （`http` / `local`）、`refresh`、`draw`、`toCell`、`cellPoint`、`rules`、`ai`、
-  `locale` 与 `setLocale('en'|'zh')`、`t`（当前语言的文案查询函数），
-  便于在控制台里检查局面、切语言或复现问题。离线模式下还有 `loadPosition(board, side)`
-  可以直接摆局面（在线模式下局面归后端所有，没有这个入口）。
-- 服务端可以直接用 `curl` 调接口，例如：
+- The page exposes `game` (current state), `ui` (interface state), `mode`
+  (`http` / `local`), `refresh`, `draw`, `toCell`, `cellPoint`, `rules`, `ai`,
+  `locale` and `setLocale('en'|'zh')`, and `t` (the text lookup for the current
+  language) on `window.__surakarta`, so you can inspect the position, switch
+  language or reproduce a problem from the console. Offline there is also
+  `loadPosition(board, side)` to set up a position directly (online the position
+  belongs to the backend and there is no such entry point).
+- The server can be driven with `curl`, for example:
 
 ```bash
 curl -s localhost:8123/api/state | head -c 200
 curl -s -X POST -H 'Content-Type: application/json' -d '{"level":3}' localhost:8123/api/level
 ```
+
+---
+
+**English** | [中文](README.zh-CN.md)
