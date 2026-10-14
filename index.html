@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Surakarta</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<!--
+  静态文案都标了 data-i18n，由 js/main.js 按当前语言填入。
+  这里预置的英文是默认语言，同时也保证脚本没跑起来时页面仍然可读。
+-->
+<div class="app">
+  <header class="app-header">
+    <div class="title-row">
+      <div>
+        <h1 data-i18n="app.title">Surakarta</h1>
+        <p class="subtitle" data-i18n="app.subtitle">6×6 intersections · 12 pieces each · capture by riding the corner loops</p>
+      </div>
+      <div class="lang-switch" id="lang-switch" role="group" aria-label="Language"></div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="board-area">
+      <div class="board-frame">
+        <div class="canvas-wrap" id="canvas-wrap">
+          <canvas id="board"></canvas>
+        </div>
+      </div>
+
+      <div class="board-status">
+        <span class="turn" id="turn-indicator" data-i18n="status.connecting">Connecting…</span>
+        <span class="thinking hidden" id="thinking"><span class="spinner"></span><span id="thinking-text"></span></span>
+      </div>
+      <!-- #link-status 故意不带 data-i18n：它的文字取决于连上了哪种驱动（在线/离线），
+           由 main.js 按驱动的 nameKey 填。若挂上 data-i18n，切语言时会被固定文案覆盖。 -->
+      <p class="link-status"><span data-i18n="conn.label">Connection: </span><span id="link-status">Looking for a backend service…</span>
+        <span class="hint-inline" data-i18n="conn.tuiHint">(Run node tui.js in a terminal to play in the console — same game as this page.)</span></p>
+
+      <div class="score-row">
+        <div class="score-card" id="card-black">
+          <span class="chip chip-black"></span>
+          <span class="score-name"><span data-i18n="side.black">Black</span><em data-i18n="card.first">first</em></span>
+          <strong id="count-black">12</strong>
+        </div>
+        <div class="score-card" id="card-red">
+          <span class="chip chip-red"></span>
+          <span class="score-name"><span data-i18n="side.red">Red</span><em data-i18n="card.second">second</em></span>
+          <strong id="count-red">12</strong>
+        </div>
+      </div>
+
+      <p class="message" id="message"></p>
+      <p class="legend">
+        <span class="legend-item"><i class="line-swatch line-inner"></i><span data-i18n="legend.inner">Inner circuit (rows 1, 4 and columns 1, 4)</span></span>
+        <span class="legend-item"><i class="line-swatch line-outer"></i><span data-i18n="legend.outer">Outer circuit (rows 2, 3 and columns 2, 3)</span></span>
+        <span class="legend-item"><i class="line-swatch line-edge"></i><span data-i18n="legend.edge">Outermost lines (no loop)</span></span>
+      </p>
+    </section>
+
+    <aside class="panel">
+      <section class="panel-block">
+        <h2 data-i18n="panel.levels">Difficulty</h2>
+        <div class="level-grid" id="level-grid"></div>
+        <p class="hint" id="level-hint"></p>
+      </section>
+
+      <section class="panel-block">
+        <h2 data-i18n="panel.sides">Play as</h2>
+        <div class="side-grid">
+          <button class="side-btn" data-side="1" data-i18n="side.playBlack">Play Black (first)</button>
+          <button class="side-btn" data-side="2" data-i18n="side.playRed">Play Red (second)</button>
+        </div>
+        <p class="hint" data-i18n="side.hint">Changing sides starts a new game right away.</p>
+      </section>
+
+      <section class="panel-block">
+        <h2 data-i18n="panel.actions">Actions</h2>
+        <div class="action-grid">
+          <button id="btn-new" data-i18n="btn.new">New game</button>
+          <button id="btn-undo" data-i18n="btn.undo">Undo</button>
+          <button id="btn-agree" data-i18n="btn.agree">Agree to end</button>
+        </div>
+      </section>
+
+      <section class="panel-block">
+        <h2 data-i18n="panel.aiStats">AI status</h2>
+        <dl class="stats" id="ai-stats">
+          <dt data-i18n="stat.depth">Search depth</dt><dd id="stat-depth">—</dd>
+          <dt data-i18n="stat.score">Evaluation</dt><dd id="stat-score">—</dd>
+          <dt data-i18n="stat.nodes">Nodes</dt><dd id="stat-nodes">—</dd>
+          <dt data-i18n="stat.time">Think time</dt><dd id="stat-time">—</dd>
+        </dl>
+      </section>
+
+      <section class="panel-block">
+        <h2 data-i18n="panel.moveLog">Move log</h2>
+        <ol class="move-list" id="move-list"></ol>
+      </section>
+
+      <details class="panel-block rules" open>
+        <summary data-i18n="panel.rules">Rules</summary>
+        <ul>
+          <li data-i18n="rule.1"></li>
+          <li data-i18n="rule.2"></li>
+          <li data-i18n="rule.3"></li>
+          <li data-i18n="rule.4"></li>
+          <li data-i18n="rule.5"></li>
+          <li data-i18n="rule.6"></li>
+          <li data-i18n="rule.7"></li>
+        </ul>
+      </details>
+    </aside>
+  </main>
+</div>
+
+<script src="js/rules.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/session.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
